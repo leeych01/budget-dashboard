@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<title>가계부 대시보드</title>
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #f4f7fc; --card: #ffffff; --ink: #1d2b45; --sub: #6b7a95; --line: #eef2f8;
+    --blue: #2f6fde; --auto: #9db7e8; --track: #e3e9f4; --soft: #f0f5ff;
+    --chip-bg: #fff2d6; --chip-ink: #a35a00; --down: #1a7f4b; --up: #d33b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121417; --card: #1c1f24; --ink: #eceef2; --sub: #9aa1ab; --line: #2b3038;
+      --blue: #5b8cff; --auto: #3d5a8f; --track: #2b3038; --soft: #232833;
+      --chip-bg: #3a2e14; --chip-ink: #f0c060; --down: #4cc38a; --up: #ff7b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.45 -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif; }
+  main { max-width: 480px; margin: 0 auto; padding: 12px 14px 40px; }
+  .top { display: flex; justify-content: space-between; align-items: center; margin: 4px 0 10px; }
+  .top h1 { font-size: 18px; margin: 0; }
+  .nav { background: none; border: 0; color: var(--blue); font-size: 22px; padding: 4px 12px; cursor: pointer; }
+  .nav:disabled { opacity: .25; }
+  .card { background: var(--card); border-radius: 16px; padding: 14px 16px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .t { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; color: var(--sub); margin-bottom: 4px; }
+  .big { font-size: 28px; font-weight: 800; letter-spacing: -.5px; }
+  .mini { font-size: 12px; color: var(--sub); }
+  .down { color: var(--down); font-weight: 700; } .up { color: var(--up); font-weight: 700; }
+  .chip { display: inline-block; background: var(--chip-bg); color: var(--chip-ink); border-radius: 10px; padding: 1px 8px; font-size: 12px; font-weight: 700; }
+  .pace { height: 12px; border-radius: 6px; background: var(--track); position: relative; margin: 10px 0 4px; }
+  .pace > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--blue); border-radius: 6px; }
+  .pace > i.over { background: var(--up); }
+  .pace > u { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--ink); }
+  .lbl { display: flex; justify-content: space-between; gap: 8px; font-size: 13.5px; }
+  .bar { height: 9px; border-radius: 5px; background: var(--track); margin: 4px 0 10px; position: relative; overflow: hidden; }
+  .bar > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--blue); border-radius: 5px; }
+  .bar.auto > i { background: var(--auto); }
+  .grp { all: unset; display: block; width: 100%; cursor: pointer; }
+  .grp:focus-visible { outline: 2px solid var(--blue); border-radius: 6px; }
+  .open { background: var(--soft); border-radius: 10px; padding: 6px 10px; margin: -6px 0 10px; font-size: 12.5px; }
+  .open div { display: flex; justify-content: space-between; padding: 2px 0; }
+  .days { display: flex; align-items: flex-end; gap: 2px; height: 64px; }
+  .days i { flex: 1; background: var(--blue); border-radius: 2px 2px 0 0; min-height: 2px; }
+  .days i.f { background: var(--track); }
+  .months { display: flex; align-items: flex-end; gap: 10px; height: 110px; padding-top: 6px; }
+  .months div { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; font-size: 11.5px; text-align: center; color: var(--sub); }
+  .months b { display: block; background: var(--blue); border-radius: 3px 3px 0 0; }
+  .months b.a { background: var(--auto); border-radius: 0; }
+  .months div.sel { color: var(--ink); font-weight: 700; }
+  .li { display: flex; justify-content: space-between; gap: 8px; font-size: 13.5px; padding: 8px 0; border-top: 1px solid var(--line); }
+  .li:first-child { border-top: 0; }
+  .li .m { color: var(--sub); font-size: 12px; }
+  .neg { color: var(--down); }
+  .confirm { display: flex; gap: 6px; margin-top: 6px; }
+  .confirm input { flex: 1; min-width: 0; font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--track); border-radius: 8px; padding: 6px 8px; }
+  button.btn, a.btn { font: inherit; font-size: 13px; font-weight: 600; border: 0; border-radius: 8px; padding: 6px 12px;
+    background: var(--blue); color: #fff; text-decoration: none; cursor: pointer; white-space: nowrap; }
+  .more { all: unset; display: block; width: 100%; text-align: center; color: var(--sub); font-size: 12.5px; padding-top: 8px; cursor: pointer; }
+  .empty { color: var(--sub); font-size: 13px; padding: 6px 0; }
+  .foot { text-align: center; color: var(--sub); font-size: 12px; margin-top: 8px; }
+  .hidden { display: none; }
+  .nums { margin-top: 8px; font-size: 12.5px; color: var(--sub); }
+  .nums summary { cursor: pointer; }
+  .nums div div { display: flex; justify-content: space-between; padding: 2px 0; }
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--bg);
+    padding: 10px 16px; border-radius: 999px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <button class="nav" id="prev" aria-label="이전 달">◀</button>
+    <h1 id="title"></h1>
+    <button class="nav" id="next" aria-label="다음 달">▶</button>
+  </div>
+
+  <section class="card" aria-label="이번 달 지출">
+    <div class="t"><span id="periodLabel"></span><span id="chip"></span></div>
+    <div class="big" id="total"></div>
+    <div class="mini" id="split"></div>
+    <div id="paceBox" class="hidden">
+      <div class="pace" id="pace"><i></i><u></u></div>
+      <div class="lbl mini"><span id="paceText"></span><span id="markText"></span></div>
+    </div>
+    <div class="mini" id="compare" style="margin-top:4px"></div>
+  </section>
+
+  <section class="card" aria-label="어디에 썼나">
+    <div class="t"><span>어디에 썼나</span><span>누르면 펼침</span></div>
+    <div id="groups"></div>
+  </section>
+
+  <section class="card" aria-label="날마다 쓴 돈">
+    <div class="t"><span>날마다 쓴 돈 (생활비)</span><span id="dayMax"></span></div>
+    <div class="days" id="days"></div>
+    <div class="lbl mini"><span>1일</span><span id="lastDay"></span></div>
+    <details class="nums"><summary>숫자로 보기</summary><div id="dayNums"></div></details>
+  </section>
+
+  <section class="card" aria-label="최근 6개월">
+    <div class="t"><span>최근 6개월</span><span><span style="color:var(--blue)">■</span> 생활비 <span style="color:var(--auto)">■</span> 자동이체</span></div>
+    <div class="months" id="months"></div>
+    <details class="nums"><summary>숫자로 보기</summary><div id="monthNums"></div></details>
+  </section>
+
+  <section class="card hidden" id="todoCard" aria-label="확인할 것">
+    <div class="t"><span>확인할 것</span></div>
+    <div id="todo"></div>
+  </section>
+
+  <section class="card" aria-label="결제 목록">
+    <div class="t"><span id="listTitle"></span><a class="btn" id="quick">+ 빠른 입력</a></div>
+    <div id="list"></div>
+  </section>
+
+  <div class="foot" id="updated"></div>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+  // <API> GitHub 페이지 판 (tools/build_pages.js 가 만듦). 숫자는 구글 Apps Script 에서 직접 받음
+  const EXEC = "https://script.google.com/macros/s/AKfycbwqyuErkeVGRFnAB63q4YWJzlarKMwMFqFoA0c7zOHVUC_NLIsm96dIVrs1wlgh6hw-nQ/exec";
+  const TOKEN = new URLSearchParams(location.hash.slice(1)).get('t') || '';
+  const QUICK = EXEC + '?t=' + encodeURIComponent(TOKEN);
+  const CACHE = 'budget-dash-last';      // 직전 이번 달 숫자 (이 폰 브라우저에만 저장, 먼저 보여 주고 새로 받음)
+  let DATA = null;
+  try { DATA = JSON.parse(localStorage.getItem(CACHE)); } catch (_) {}
+  async function call(url, opt) {
+    const r = await fetch(url, opt);
+    let j;
+    try { j = await r.json(); } catch (_) { throw new Error('권한이 없거나 연결이 안 돼요'); }
+    if (j && j.ok === false) throw new Error(j.error || '실패');
+    return j;
+  }
+  const API = {
+    get: (ym, ok, fail) => call(EXEC + '?t=' + encodeURIComponent(TOKEN) + '&f=dash&ym=' + encodeURIComponent(ym || ''))
+      .then(d => { if (d.isCurrent) { try { localStorage.setItem(CACHE, JSON.stringify(d)); } catch (_) {} } ok(d); }, fail),
+    // text/plain 으로 보내야 브라우저가 미리 묻는 요청(preflight) 없이 Apps Script 에 바로 감
+    confirm: (row, name, amount, ok, fail) => call(EXEC, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ token: TOKEN, action: 'confirm', row: row, name: name, amount: amount }) }).then(ok, fail),
+  };
+  // </API>
+  let shown = 30;                 // 결제 목록에 처음 보일 줄 수
+  const opened = {};              // 펼친 묶음
+
+  const $ = id => document.getElementById(id);
+  const won = n => Math.round(n).toLocaleString('ko-KR') + '원';
+  const num = n => Math.round(n).toLocaleString('ko-KR');
+  const pct = (a, b) => (b > 0 ? Math.max(0, Math.min(100, a / b * 100)) : 0);
+
+  // 글자는 모두 textContent 로 (가게 이름 등에 <, > 가 있어도 글자 그대로)
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function toast(msg) {
+    const t = $('toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2400);
+  }
+
+  let reqId = 0;                  // 늦게 온 옛 응답이 새 화면을 덮지 않게
+  function load(ym, quiet) {     // quiet: 보이는 화면을 그대로 두고 뒤에서 새로 받기 (직전 숫자를 먼저 보여 줄 때)
+    const my = ++reqId;
+    if (!quiet) { $('prev').disabled = $('next').disabled = true; $('title').textContent = '불러오는 중…'; }
+    API.get(ym,
+      d => { if (my !== reqId) return; DATA = d; if (!quiet) { shown = 30; window.scrollTo(0, 0); } render(); },
+      e => { if (my !== reqId) return; toast('불러오지 못했어요: ' + e.message); if (DATA) render(); });
+  }
+
+  function renderHead(d, s) {
+    $('title').textContent = d.label;
+    $('prev').disabled = false;
+    $('next').disabled = !d.nextYm;
+    $('periodLabel').textContent = d.isCurrent ? '이번 달 지출 · ' + d.today + '일까지' : (Number(d.ym.slice(5)) + '월 지출');
+    $('chip').replaceChildren();
+    if (s.attention.count) $('chip').append(el('span', 'chip', '확인 ' + s.attention.count + '건'));
+    $('total').textContent = won(s.total);
+    $('split').textContent = '생활비 ' + num(s.live) + ' · 자동이체 ' + num(s.auto) + (s.expected.count ? ' (예상 ' + num(s.expected.amount) + ' 포함)' : '');
+
+    const p = s.pace;
+    $('paceBox').classList.toggle('hidden', !p);
+    if (p) {
+      const fill = $('pace').querySelector('i'), mark = $('pace').querySelector('u');
+      fill.style.width = Math.min(100, Math.max(0, p.ratio)) + '%';
+      fill.classList.toggle('over', d.isCurrent && p.ratio > p.mark);
+      mark.style.left = Math.min(100, p.mark) + '%';
+      mark.classList.toggle('hidden', !d.isCurrent);
+      $('paceText').textContent = '생활비 = ' + s.avg.months + '개월 평균 ' + won(s.avg.live) + '의 ' + Math.round(p.ratio) + '%';
+      $('markText').textContent = d.isCurrent ? '┃적정 ' + Math.round(p.mark) + '%' : '';
+    }
+    const diff = s.total - s.prevSame;
+    const c = $('compare'); c.replaceChildren();
+    c.append(document.createTextNode(d.isCurrent ? '지난달 같은 날보다 ' : '지난달보다 '));
+    c.append(el('span', diff > 0 ? 'up' : 'down', (diff > 0 ? '▲' : diff < 0 ? '▼' : '±') + won(Math.abs(diff))));
+  }
+
+  function renderGroups(s) {
+    const box = $('groups'); box.replaceChildren();
+    const max = Math.max(0, ...s.groups.map(g => g.amount));
+    if (!s.groups.length) { box.append(el('div', 'empty', '기록 없음')); return; }
+    s.groups.forEach(g => {
+      const b = el('button', 'grp'); b.setAttribute('aria-expanded', !!opened[g.name]);
+      const l = el('div', 'lbl');
+      const name = el('span', '', g.name + (opened[g.name] ? ' ▾' : ' ▸'));
+      if (g.auto) name.append(el('span', 'mini', ' 자동'));
+      l.append(name, el('span', '', num(g.amount)));
+      const bar = el('div', 'bar' + (g.auto ? ' auto' : '')); const i = el('i'); i.style.width = pct(g.amount, max) + '%'; bar.append(i);
+      b.append(l, bar);
+      b.addEventListener('click', () => { opened[g.name] = !opened[g.name]; renderGroups(DATA.stats); });
+      box.append(b);
+      if (opened[g.name]) {
+        const o = el('div', 'open');
+        g.cats.forEach(c => { const r = el('div'); r.append(el('span', '', c.cat), el('span', '', num(c.amount))); o.append(r); });
+        box.append(o);
+      }
+    });
+  }
+
+  function renderDays(d, s) {
+    const box = $('days'); box.replaceChildren();
+    const max = Math.max(0, ...s.daily);
+    s.daily.forEach((v, i) => {
+      const future = d.isCurrent && i + 1 > d.today;
+      const b = el('i', future || v <= 0 ? 'f' : ''); b.style.height = (future || v <= 0 ? 3 : Math.max(3, pct(v, max))) + '%';
+      b.title = (i + 1) + '일 ' + won(v);
+      box.append(b);
+    });
+    const top = s.daily.indexOf(max);
+    $('dayMax').textContent = max > 0 ? '최대 ' + (top + 1) + '일 ' + num(max) : '';
+    $('lastDay').textContent = s.daily.length + '일';
+    const nums = $('dayNums'); nums.replaceChildren();
+    s.daily.forEach((v, i) => { if (v) { const r = el('div'); r.append(el('span', '', (i + 1) + '일'), el('span', v < 0 ? 'neg' : '', won(v))); nums.append(r); } });
+    if (!nums.children.length) nums.append(el('div', 'empty', '기록 없음'));
+  }
+
+  function renderMonths(d) {
+    const box = $('months'); box.replaceChildren();
+    const max = Math.max(1, ...d.months.map(m => Math.max(0, m.live) + Math.max(0, m.auto)));
+    d.months.forEach(m => {
+      const c = el('div', m.ym === d.ym ? 'sel' : '');
+      const live = el('b'); live.style.height = pct(Math.max(0, m.live), max) * 0.8 + 'px';
+      const auto = el('b', 'a'); auto.style.height = pct(Math.max(0, m.auto), max) * 0.8 + 'px';
+      c.title = m.label + ' 생활비 ' + won(m.live) + ' · 자동이체 ' + won(m.auto);
+      c.append(live, auto, document.createTextNode(m.label));
+      box.append(c);
+    });
+    const nums = $('monthNums'); nums.replaceChildren();
+    d.months.forEach(m => { const r = el('div'); r.append(el('span', '', m.label), el('span', '', '생활비 ' + num(m.live) + ' · 자동이체 ' + num(m.auto))); nums.append(r); });
+  }
+
+  function renderTodo(d) {
+    const box = $('todo'); box.replaceChildren();
+    $('todoCard').classList.toggle('hidden', !d.pending.length && !d.checks.length);
+    d.pending.forEach(p => {
+      const r = el('div', 'li'); r.style.display = 'block';
+      const top = el('div', 'lbl'); top.append(el('span', '', p.name + ' '), el('span', '', won(p.amount)));
+      top.firstChild.append(el('span', 'm', '예상치 · ' + p.date + (p.basis ? ' · ' + p.basis : '')));
+      const f = el('div', 'confirm');
+      const input = el('input'); input.inputMode = 'numeric'; input.placeholder = '실제 금액'; input.setAttribute('aria-label', p.name + ' 실제 금액');
+      const btn = el('button', 'btn', '금액 확정');
+      btn.addEventListener('click', () => {
+        const v = input.value.trim(), ym = DATA.ym;
+        if (!/\d/.test(v)) { toast('금액을 입력해 주세요'); return; }
+        btn.disabled = true;
+        API.confirm(p.row, p.name, v,
+          () => { toast(p.name + ' 확정했어요'); load(ym); },
+          e => { btn.disabled = false; toast(e.message); });
+      });
+      f.append(input, btn); r.append(top, f); box.append(r);
+    });
+    d.checks.forEach(c => {
+      const r = el('div', 'li');
+      const left = el('span'); left.append(el('span', 'chip', '점검'), document.createTextNode(' ' + c.merchant + ' '), el('span', 'm', c.date + ' 같은 결제일 수 있음'));
+      r.append(left, el('span', 'm', '시트에서 정리'));
+      box.append(r);
+    });
+  }
+
+  function renderList(d) {
+    $('listTitle').textContent = Number(d.ym.slice(5)) + '월 결제 ' + d.listTotal + '건';
+    const box = $('list'); box.replaceChildren();
+    if (!d.list.length) { box.append(el('div', 'empty', '기록 없음')); return; }
+    d.list.slice(0, shown).forEach(x => {
+      const r = el('div', 'li');
+      const left = el('span'); left.append(document.createTextNode(x.date + ' ' + x.merchant), el('br'),
+        el('span', 'm', [x.card, x.cat, x.flag].filter(Boolean).join(' · ')));
+      r.append(left, el('span', x.amount < 0 ? 'neg' : '', num(x.amount)));
+      box.append(r);
+    });
+    if (d.listTotal > d.list.length && shown >= d.list.length) box.append(el('div', 'empty', '최근 ' + d.list.length + '건까지만 보여요. 나머지는 시트에서'));
+    if (d.list.length > shown) {
+      const more = el('button', 'more', '더 보기 ▾ (' + (d.list.length - shown) + '건 더)');
+      more.addEventListener('click', () => { shown += 30; renderList(DATA); });
+      box.append(more);
+    }
+  }
+
+  function render() {
+    const d = DATA, s = d.stats;
+    renderHead(d, s); renderGroups(s); renderDays(d, s); renderMonths(d); renderTodo(d); renderList(d);
+    $('updated').textContent = d.updated + ' 기준';
+  }
+
+  $('prev').addEventListener('click', () => load(DATA.prevYm));
+  $('next').addEventListener('click', () => DATA.nextYm && load(DATA.nextYm));
+  $('quick').href = QUICK;
+  if (DATA) render();
+  // <START> 열자마자 직전 숫자(있으면)를 보이고, 뒤에서 이번 달을 새로 받음
+  if (!TOKEN) { document.querySelector('main').textContent = '위젯이나 설정 탭의 주소(#t=… 포함)로 열어 주세요.'; }
+  else if (DATA) { load('', true); }
+  else { load(''); }
+  // </START>
+</script>
+</body>
+</html>
