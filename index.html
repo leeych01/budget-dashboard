@@ -57,6 +57,12 @@
   .li { display: flex; justify-content: space-between; gap: 8px; font-size: 13.5px; padding: 8px 0; border-top: 1px solid var(--line); }
   .li:first-child { border-top: 0; }
   .li .m { color: var(--sub); font-size: 12px; }
+  button.li { all: unset; box-sizing: border-box; display: flex; justify-content: space-between; gap: 8px; width: 100%;
+    font-size: 13.5px; padding: 8px 0; border-top: 1px solid var(--line); cursor: pointer; }
+  button.li:focus-visible { outline: 2px solid var(--blue); border-radius: 6px; }
+  .pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; background: var(--soft); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
+  .pick select { flex: 1; min-width: 0; font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--track); border-radius: 8px; padding: 6px 8px; }
+  .pick label { width: 100%; font-size: 12.5px; color: var(--sub); }
   .neg { color: var(--down); }
   .confirm { display: flex; gap: 6px; margin-top: 6px; }
   .confirm input { flex: 1; min-width: 0; font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--track); border-radius: 8px; padding: 6px 8px; }
@@ -171,10 +177,14 @@
     // text/plain 으로 보내야 브라우저가 미리 묻는 요청(preflight) 없이 Apps Script 에 바로 감
     confirm: (row, name, amount, ok, fail) => call(EXEC, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ token: TOKEN, action: 'confirm', row: row, name: name, amount: amount }) }).then(ok, fail),
+    setcat: (x, cat, remember, ok, fail) => call(EXEC, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ token: TOKEN, action: 'setcat', row: x.row, name: x.merchant, key: x.key, cat: cat, remember: remember }) }).then(ok, fail),
   };
   // </API>
   let shown = 30;                 // 결제 목록에 처음 보일 줄 수
   const opened = {};              // 펼친 묶음
+  let editing = null;             // 카테고리를 고르는 중인 결제 { row, cat, remember } (다시 그려도 고른 값 유지)
+  let saving = false;             // 카테고리 저장 중 (두 번 보내지 않게)
 
   const $ = id => document.getElementById(id);
   const won = n => Math.round(n).toLocaleString('ko-KR') + '원';
@@ -201,8 +211,8 @@
     if (quiet && busy()) return;
     if (!quiet) { $('prev').disabled = $('next').disabled = true; $('title').textContent = '불러오는 중…'; }
     API.get(ym,
-      d => { if (my !== reqId || (quiet && busy())) return; DATA = d; if (!quiet) { shown = 30; window.scrollTo(0, 0); } render(); },
-      e => { if (my !== reqId) return; toast('불러오지 못했어요: ' + e.message); if (DATA) render(); });
+      d => { if (my !== reqId || (quiet && busy())) return; DATA = d; if (!quiet) { shown = 30; editing = null; window.scrollTo(0, 0); } render(); },
+      e => { if (my !== reqId) return; toast('불러오지 못했어요: ' + e.message); if (DATA && !(quiet && busy())) render(); });
   }
 
   function renderHead(d, s) {
@@ -316,15 +326,26 @@
 
   function renderList(d) {
     const loading = d.listTotal < 0;   // GitHub 판: 저장해 둔 숫자만 보이는 동안 (목록은 저장 안 함)
-    $('listTitle').textContent = Number(d.ym.slice(5)) + '월 결제' + (loading ? '' : ' ' + d.listTotal + '건');
+    const can = !!d.cats && d.cats.length > 0;   // 서버가 카테고리 목록을 줄 때만 눌러서 바꾸기 (rev 0.22)
+    $('listTitle').textContent = Number(d.ym.slice(5)) + '월 결제' + (loading ? '' : ' ' + d.listTotal + '건' + (can ? ' · 누르면 분류 변경' : ''));
     const box = $('list'); box.replaceChildren();
     if (!d.list.length) { box.append(el('div', 'empty', loading ? '불러오는 중…' : '기록 없음')); return; }
     d.list.slice(0, shown).forEach(x => {
-      const r = el('div', 'li');
+      const r = el(can && x.row ? 'button' : 'div', 'li');
       const left = el('span'); left.append(document.createTextNode(x.date + ' ' + x.merchant), el('br'),
         el('span', 'm', [x.card, x.cat, x.flag].filter(Boolean).join(' · ')));
       r.append(left, el('span', x.amount < 0 ? 'neg' : '', num(x.amount)));
+      const open = !!editing && editing.row === x.row;
+      if (r.tagName === 'BUTTON') {
+        r.setAttribute('aria-expanded', open);
+        r.addEventListener('click', () => {
+          if (saving) return;
+          editing = open ? null : { row: x.row, cat: x.cat, remember: x.cat === '미분류' };
+          renderList(DATA);
+        });
+      }
       box.append(r);
+      if (open) box.append(picker(x));
     });
     if (d.listTotal > d.list.length && shown >= d.list.length) box.append(el('div', 'empty', '최근 ' + d.list.length + '건까지만 보여요. 나머지는 시트에서'));
     if (d.list.length > shown) {
@@ -332,6 +353,31 @@
       more.addEventListener('click', () => { shown += 30; renderList(DATA); });
       box.append(more);
     }
+  }
+
+  // 카테고리 고르기: 고른 이름만 서버로 (서버가 '카테고리' 탭에 있는 이름인지 다시 확인)
+  function picker(x) {
+    const f = el('div', 'pick');
+    const sel = el('select'); sel.setAttribute('aria-label', x.merchant + ' 카테고리');
+    const list = DATA.cats.includes(x.cat) ? DATA.cats : [x.cat].concat(DATA.cats);
+    list.forEach(c => { const o = el('option', '', c); o.value = c; o.selected = c === editing.cat; sel.append(o); });
+    const btn = el('button', 'btn', '저장'); btn.disabled = saving;
+    const lab = el('label'); const chk = el('input'); chk.type = 'checkbox'; chk.checked = editing.remember;
+    lab.append(chk, document.createTextNode(' 이 가게는 앞으로도 (분류규칙에 추가, 같은 가게 미분류도 같이)'));
+    sel.addEventListener('change', () => { editing.cat = sel.value; });
+    chk.addEventListener('change', () => { editing.remember = chk.checked; });
+    btn.addEventListener('click', () => {
+      if (saving) return;
+      if (sel.value === x.cat && !chk.checked) { editing = null; renderList(DATA); return; }
+      const was = lastYm, cat = sel.value; saving = btn.disabled = true;
+      API.setcat(x, cat, chk.checked,
+        // 보던 자리·펼친 줄 수를 그대로 두고 조용히 다시 받음 (선택칸을 먼저 닫아야 받은 숫자를 그림)
+        // 저장 중에 달을 옮겼으면 다시 받지 않음 (옮긴 달 화면을 이전 달로 되돌리지 않게)
+        () => { saving = false; editing = null; x.cat = cat; toast(x.merchant + ' → ' + cat); renderList(DATA); if (lastYm === was) load(was, true); },
+        e => { saving = false; btn.disabled = false; toast(e.message); });
+    });
+    f.append(sel, btn, lab);
+    return f;
   }
 
   function render() {
@@ -352,9 +398,10 @@
   // 보던 달을 다시 받음 (이번 달은 '' 라서 그 사이 달이 바뀌어도 이번 달)
   // 금액을 입력하는 중이거나 확정을 보내는 중이면 건너뜀 (다시 그리면 입력값이 사라짐)
   // 응답이 오는 사이에 입력을 시작해도 조용히 받은 숫자는 그리지 않음 (load 안에서도 확인)
+  // 카테고리를 고르는 칸이 열려 있어도 건너뜀
   function busy() {
     return Array.from(document.querySelectorAll('.confirm input')).some(i => i.value.trim())
-      || !!document.querySelector('.confirm button:disabled');
+      || !!document.querySelector('.confirm button:disabled, .pick');
   }
   function refresh() {
     if (!TOKEN || blocked || document.hidden) return;
