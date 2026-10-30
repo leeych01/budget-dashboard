@@ -153,8 +153,9 @@
       localStorage.setItem(CACHE, JSON.stringify({ f: await fingerprint(), at: Date.now(), d: slim }));
     } catch (_) {}
   }
+  let blocked = false;            // 권한 실패 뒤에는 다시 받지 않음 (화면이 비어 있음)
   function denied() {
-    clearCache(); DATA = null;
+    blocked = true; clearCache(); DATA = null;
     document.querySelector('main').textContent = '권한이 없어요. 위젯이나 설정 탭의 대시보드 주소로 다시 열어 주세요.';
   }
   async function call(url, opt) {
@@ -193,11 +194,14 @@
   }
 
   let reqId = 0;                  // 늦게 온 옛 응답이 새 화면을 덮지 않게
+  let lastYm = '';                // 마지막으로 요청한 달 ('' = 이번 달). 달 이동 중에 돌아와도 그 달을 다시 받게
   function load(ym, quiet) {     // quiet: 보이는 화면을 그대로 두고 뒤에서 새로 받기 (직전 숫자를 먼저 보여 줄 때)
     const my = ++reqId;
+    lastYm = ym || '';
+    if (quiet && busy()) return;
     if (!quiet) { $('prev').disabled = $('next').disabled = true; $('title').textContent = '불러오는 중…'; }
     API.get(ym,
-      d => { if (my !== reqId) return; DATA = d; if (!quiet) { shown = 30; window.scrollTo(0, 0); } render(); },
+      d => { if (my !== reqId || (quiet && busy())) return; DATA = d; if (!quiet) { shown = 30; window.scrollTo(0, 0); } render(); },
       e => { if (my !== reqId) return; toast('불러오지 못했어요: ' + e.message); if (DATA) render(); });
   }
 
@@ -344,6 +348,20 @@
   if (!TOKEN) { clearCache(); document.querySelector('main').textContent = '위젯이나 설정 탭의 대시보드 주소(#t=… 포함)로 열어 주세요.'; }
   else { readCache().then(c => { if (c) { DATA = c; render(); load('', true); } else load(''); }); }
   // </START>
+  // 위젯을 다시 누르면 브라우저(삼성 인터넷)는 열어 둔 탭을 앞으로 꺼내기만 함(새로고침 없음) → 다시 보일 때마다 새로 받음.
+  // 보던 달을 다시 받음 (이번 달은 '' 라서 그 사이 달이 바뀌어도 이번 달)
+  // 금액을 입력하는 중이거나 확정을 보내는 중이면 건너뜀 (다시 그리면 입력값이 사라짐)
+  // 응답이 오는 사이에 입력을 시작해도 조용히 받은 숫자는 그리지 않음 (load 안에서도 확인)
+  function busy() {
+    return Array.from(document.querySelectorAll('.confirm input')).some(i => i.value.trim())
+      || !!document.querySelector('.confirm button:disabled');
+  }
+  function refresh() {
+    if (!TOKEN || blocked || document.hidden) return;
+    load(lastYm, !!DATA);
+  }
+  document.addEventListener('visibilitychange', refresh);
+  window.addEventListener('pageshow', e => { if (e.persisted) refresh(); });   // 뒤로 가기 캐시에서 되살아난 경우
 </script>
 </body>
 </html>
