@@ -339,7 +339,7 @@
       if (r.tagName === 'BUTTON') {
         r.setAttribute('aria-expanded', open);
         r.addEventListener('click', () => {
-          if (saving) return;
+          if (saving) { toast('저장 중이에요. 잠시 뒤에 눌러 주세요'); return; }
           editing = open ? null : { row: x.row, cat: x.cat, remember: x.cat === '미분류' };
           renderList(DATA);
         });
@@ -369,12 +369,22 @@
     btn.addEventListener('click', () => {
       if (saving) return;
       if (sel.value === x.cat && !chk.checked) { editing = null; renderList(DATA); return; }
-      const was = lastYm, cat = sel.value; saving = btn.disabled = true;
-      API.setcat(x, cat, chk.checked,
-        // 보던 자리·펼친 줄 수를 그대로 두고 조용히 다시 받음 (선택칸을 먼저 닫아야 받은 숫자를 그림)
+      // 서버 저장(약 2초)을 기다리지 않고 목록부터 바꿔 보여 줌 (rev 0.23). 실패하면 되돌림
+      const was = lastYm, cat = sel.value, remember = chk.checked;
+      const changed = DATA.list.filter(y => y === x || (remember && y.merchant === x.merchant && y.cat === '미분류'));
+      const before = changed.map(y => y.cat);
+      changed.forEach(y => { y.cat = cat; });
+      saving = true; editing = null; renderList(DATA);
+      API.setcat(x, cat, remember,
+        // 보던 자리·펼친 줄 수를 그대로 두고 조용히 다시 받음 (묶음 합계도 맞춤)
         // 저장 중에 달을 옮겼으면 다시 받지 않음 (옮긴 달 화면을 이전 달로 되돌리지 않게)
-        () => { saving = false; editing = null; x.cat = cat; toast(x.merchant + ' → ' + cat); renderList(DATA); if (lastYm === was) load(was, true); },
-        e => { saving = false; btn.disabled = false; toast(e.message); });
+        () => { saving = false; toast(x.merchant + ' → ' + cat + ' 저장했어요'); if (lastYm === was) load(was, true); },
+        e => {
+          saving = false;
+          changed.forEach((y, i) => { if (y.cat === cat) y.cat = before[i]; });
+          if (DATA && DATA.list.includes(x)) renderList(DATA);
+          toast('저장 못 했어요: ' + e.message);
+        });
     });
     f.append(sel, btn, lab);
     return f;
@@ -398,9 +408,9 @@
   // 보던 달을 다시 받음 (이번 달은 '' 라서 그 사이 달이 바뀌어도 이번 달)
   // 금액을 입력하는 중이거나 확정을 보내는 중이면 건너뜀 (다시 그리면 입력값이 사라짐)
   // 응답이 오는 사이에 입력을 시작해도 조용히 받은 숫자는 그리지 않음 (load 안에서도 확인)
-  // 카테고리를 고르는 칸이 열려 있어도 건너뜀
+  // 카테고리를 고르는 칸이 열려 있거나 저장 중이어도 건너뜀 (저장 전 옛 카테고리가 다시 보이지 않게)
   function busy() {
-    return Array.from(document.querySelectorAll('.confirm input')).some(i => i.value.trim())
+    return saving || Array.from(document.querySelectorAll('.confirm input')).some(i => i.value.trim())
       || !!document.querySelector('.confirm button:disabled, .pick');
   }
   function refresh() {
