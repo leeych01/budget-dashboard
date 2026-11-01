@@ -61,7 +61,8 @@
     font-size: 13.5px; padding: 8px 0; border-top: 1px solid var(--line); cursor: pointer; }
   button.li:focus-visible { outline: 2px solid var(--blue); border-radius: 6px; }
   .pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; background: var(--soft); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
-  .pick select { flex: 1; min-width: 0; font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--track); border-radius: 8px; padding: 6px 8px; }
+  .pick select, .pick input[type=text] { flex: 1; min-width: 0; font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--track); border-radius: 8px; padding: 6px 8px; }
+  .pick select { flex-basis: 100%; }
   .pick label { width: 100%; font-size: 12.5px; color: var(--sub); }
   .neg { color: var(--down); }
   .confirm { display: flex; gap: 6px; margin-top: 6px; }
@@ -137,7 +138,7 @@
   const TOKEN = new URLSearchParams(location.hash.slice(1)).get('t') || '';
   const QUICK = EXEC + '?t=' + encodeURIComponent(TOKEN);
   // 직전 이번 달 숫자 (이 폰 브라우저에만, 먼저 보여 주고 새로 받음). 보안(Codex 점검):
-  //  - 합계·그래프 + 이번 달 결제 목록(날짜·가게·카드사(끝자리 뺌)·카테고리·금액)을 저장, 7일 지나면 버림.
+  //  - 합계·그래프 + 이번 달 결제 목록(날짜·가게·카드사(끝자리 뺌)·카테고리·금액·메모(rev 0.28))을 저장, 7일 지나면 버림.
   //    확인할 것(메모)은 저장 안 함. 목록 저장은 rev 0.24 사용자 결정 (열자마자 목록이 보이게, 위젯에 이미 토큰이 있는 같은 폰)
   //  - 토큰 지문(SHA-256 앞부분)이 맞을 때만 보여 줌, 권한 실패하면 바로 지움 → 틀린 주소로 열어도 안 보임
   const CACHE = 'budget-dash-v2', OLD_CACHE = 'budget-dash-last', KEEP_MS = 7 * 864e5;
@@ -176,18 +177,21 @@
   }
   const API = {
     get: (ym, ok, fail) => call(EXEC + '?t=' + encodeURIComponent(TOKEN) + '&f=dash&ym=' + encodeURIComponent(ym || ''))
-      .then(d => { if (d.isCurrent) saveCache(d); ok(d); }, e => (e.auth ? denied() : fail(e))),
+      .then(ok, e => (e.auth ? denied() : fail(e))),
     // text/plain 으로 보내야 브라우저가 미리 묻는 요청(preflight) 없이 Apps Script 에 바로 감
     confirm: (row, name, amount, ok, fail) => call(EXEC, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ token: TOKEN, action: 'confirm', row: row, name: name, amount: amount }) }).then(ok, fail),
     setcat: (x, cat, remember, ok, fail) => call(EXEC, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ token: TOKEN, action: 'setcat', row: x.row, name: x.merchant, key: x.key, cat: cat, remember: remember }) }).then(ok, fail),
+    // old: 보고 있던 메모 (그 사이 시트에서 바뀌었으면 서버가 거부, rev 0.28)
+    setmemo: (x, old, memo) => call(EXEC, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ token: TOKEN, action: 'setmemo', row: x.row, name: x.merchant, key: x.key, old: old, memo: memo }) }),
   };
   // </API>
   let shown = 30;                 // 결제 목록에 처음 보일 줄 수
   const opened = {};              // 펼친 묶음
-  let editing = null;             // 카테고리를 고르는 중인 결제 { row, cat, remember } (다시 그려도 고른 값 유지)
-  let saving = false;             // 카테고리 저장 중 (두 번 보내지 않게)
+  let editing = null;             // 카테고리·메모를 고치는 중인 결제 { row, cat, remember, memo } (다시 그려도 고른 값 유지)
+  let saving = false;             // 카테고리·메모 저장 중 (두 번 보내지 않게)
 
   const $ = id => document.getElementById(id);
   const won = n => Math.round(n).toLocaleString('ko-KR') + '원';
@@ -214,7 +218,8 @@
     if (quiet && busy()) return;
     if (!quiet) { $('prev').disabled = $('next').disabled = true; $('title').textContent = '불러오는 중…'; }
     API.get(ym,
-      d => { if (my !== reqId || (quiet && busy())) return; DATA = d; if (!quiet) { shown = 30; editing = null; window.scrollTo(0, 0); } render(); },
+      // 화면에 쓰는 응답만 폰에 저장 (늦게 온 옛 응답이 저장본을 덮지 않게, Codex 검토 rev 0.28)
+      d => { if (my !== reqId || (quiet && busy())) return; if (d.isCurrent) saveCache(d); DATA = d; if (!quiet) { shown = 30; editing = null; window.scrollTo(0, 0); } render(); },
       e => { if (my !== reqId) return; toast('불러오지 못했어요: ' + e.message); if (DATA && !(quiet && busy())) render(); });
   }
 
@@ -330,20 +335,21 @@
   function renderList(d) {
     const loading = d.listTotal < 0;   // rev 0.23 이전에 저장된 숫자만 보이는 동안 (그때는 목록을 저장 안 했음)
     const can = !!d.cats && d.cats.length > 0;   // 서버가 카테고리 목록을 줄 때만 눌러서 바꾸기 (rev 0.22)
-    $('listTitle').textContent = Number(d.ym.slice(5)) + '월 결제' + (loading ? '' : ' ' + d.listTotal + '건' + (can ? ' · 누르면 분류 변경' : ''));
+    $('listTitle').textContent = Number(d.ym.slice(5)) + '월 결제' + (loading ? '' : ' ' + d.listTotal + '건' + (can ? ' · 누르면 분류·메모' : ''));
     const box = $('list'); box.replaceChildren();
     if (!d.list.length) { box.append(el('div', 'empty', loading ? '불러오는 중…' : '기록 없음')); return; }
     d.list.slice(0, shown).forEach(x => {
       const r = el(can && x.row ? 'button' : 'div', 'li');
       const left = el('span'); left.append(document.createTextNode(x.date + ' ' + x.merchant), el('br'),
         el('span', 'm', [x.card, x.cat, x.flag].filter(Boolean).join(' · ')));
+      if (x.memo) left.append(el('br'), el('span', 'm', '✎ ' + x.memo));
       r.append(left, el('span', x.amount < 0 ? 'neg' : '', num(x.amount)));
       const open = !!editing && editing.row === x.row;
       if (r.tagName === 'BUTTON') {
         r.setAttribute('aria-expanded', open);
         r.addEventListener('click', () => {
           if (saving) { toast('저장 중이에요. 잠시 뒤에 눌러 주세요'); return; }
-          editing = open ? null : { row: x.row, cat: x.cat, remember: x.cat === '미분류' };
+          editing = open ? null : { row: x.row, cat: x.cat, remember: x.cat === '미분류', memo: x.memo || '' };
           renderList(DATA);
         });
       }
@@ -358,38 +364,47 @@
     }
   }
 
-  // 카테고리 고르기: 고른 이름만 서버로 (서버가 '카테고리' 탭에 있는 이름인지 다시 확인)
+  // 카테고리 고르기·메모: 고른 이름만 서버로 (서버가 '카테고리' 탭에 있는 이름인지 다시 확인)
   function picker(x) {
     const f = el('div', 'pick');
     const sel = el('select'); sel.setAttribute('aria-label', x.merchant + ' 카테고리');
     const list = DATA.cats.includes(x.cat) ? DATA.cats : [x.cat].concat(DATA.cats);
     list.forEach(c => { const o = el('option', '', c); o.value = c; o.selected = c === editing.cat; sel.append(o); });
+    const memo = el('input'); memo.type = 'text'; memo.maxLength = 200; memo.value = editing.memo;
+    memo.placeholder = '메모 (예: 이월드 주차)'; memo.setAttribute('aria-label', x.merchant + ' 메모');
     const btn = el('button', 'btn', '저장'); btn.disabled = saving;
     const lab = el('label'); const chk = el('input'); chk.type = 'checkbox'; chk.checked = editing.remember;
     lab.append(chk, document.createTextNode(' 이 가게는 앞으로도 (분류규칙에 추가, 같은 가게 미분류도 같이)'));
     sel.addEventListener('change', () => { editing.cat = sel.value; });
     chk.addEventListener('change', () => { editing.remember = chk.checked; });
+    memo.addEventListener('input', () => { editing.memo = memo.value; });
     btn.addEventListener('click', () => {
       if (saving) return;
-      if (sel.value === x.cat && !chk.checked) { editing = null; renderList(DATA); return; }
+      const was = lastYm, cat = sel.value, remember = chk.checked, note = memo.value.trim(), oldNote = x.memo || '';
+      // 미분류 그대로 + 앞으로도(기본 체크)는 분류 저장 안 함 (메모만 쓸 때 '미분류' 규칙이 생기지 않게)
+      const catJob = cat !== x.cat || (remember && cat !== '미분류'), memoJob = note !== oldNote;
+      if (!catJob && !memoJob) { editing = null; renderList(DATA); return; }
       // 서버 저장(약 2초)을 기다리지 않고 목록부터 바꿔 보여 줌 (rev 0.23). 실패하면 되돌림
-      const was = lastYm, cat = sel.value, remember = chk.checked;
-      const changed = DATA.list.filter(y => y === x || (remember && y.merchant === x.merchant && y.cat === '미분류'));
+      const changed = catJob ? DATA.list.filter(y => y === x || (remember && y.merchant === x.merchant && y.cat === '미분류')) : [];
       const before = changed.map(y => y.cat);
-      changed.forEach(y => { y.cat = cat; });
+      changed.forEach(y => { y.cat = cat; }); x.memo = note;
       saving = true; editing = null; renderList(DATA);
-      API.setcat(x, cat, remember,
+      // 분류·메모는 따로 저장 → 하나만 실패하면 그것만 되돌림
+      Promise.allSettled([catJob && API.setcat(x, cat, remember), memoJob && API.setmemo(x, oldNote, note)]).then(([c, m]) => {
+        saving = false;
+        if (c.status === 'rejected') changed.forEach((y, i) => { if (y.cat === cat) y.cat = before[i]; });
+        if (m.status === 'rejected' && x.memo === note) x.memo = oldNote;
+        if (memoJob && m.status === 'fulfilled') x.memo = m.value.memo;   // 서버가 실제 저장한 글 ('|' → '/' 등)
+        if (DATA && DATA.list.includes(x)) renderList(DATA);
+        const bad = [c, m].find(r => r.status === 'rejected');
+        toast(bad ? '저장 못 했어요: ' + bad.reason.message : x.merchant + (catJob ? ' → ' + cat : ' 메모') + ' 저장했어요');
         // 보던 자리·펼친 줄 수를 그대로 두고 조용히 다시 받음 (묶음 합계도 맞춤)
         // 저장 중에 달을 옮겼으면 다시 받지 않음 (옮긴 달 화면을 이전 달로 되돌리지 않게)
-        () => { saving = false; toast(x.merchant + ' → ' + cat + ' 저장했어요'); if (lastYm === was) load(was, true); },
-        e => {
-          saving = false;
-          changed.forEach((y, i) => { if (y.cat === cat) y.cat = before[i]; });
-          if (DATA && DATA.list.includes(x)) renderList(DATA);
-          toast('저장 못 했어요: ' + e.message);
-        });
+        const saved = (catJob && c.status === 'fulfilled') || (memoJob && m.status === 'fulfilled');
+        if (saved && lastYm === was) load(was, true);
+      });
     });
-    f.append(sel, btn, lab);
+    f.append(sel, memo, btn, lab);
     return f;
   }
 
