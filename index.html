@@ -69,7 +69,8 @@
   .confirm input { flex: 1; min-width: 0; font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--track); border-radius: 8px; padding: 6px 8px; }
   button.btn, a.btn { font: inherit; font-size: 13px; font-weight: 600; border: 0; border-radius: 8px; padding: 6px 12px;
     background: var(--blue); color: #fff; text-decoration: none; cursor: pointer; white-space: nowrap; }
-  .more { all: unset; display: block; width: 100%; text-align: center; color: var(--sub); font-size: 12.5px; padding-top: 8px; cursor: pointer; }
+  .pager { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; color: var(--sub); }
+  .pager button:disabled { opacity: .3; cursor: default; }
   .empty { color: var(--sub); font-size: 13px; padding: 6px 0; }
   .foot { text-align: center; color: var(--sub); font-size: 12px; margin-top: 8px; }
   .hidden { display: none; }
@@ -124,7 +125,7 @@
   </section>
 
   <section class="card" aria-label="결제 목록">
-    <div class="t"><span id="listTitle"></span><a class="btn" id="quick">+ 빠른 입력</a></div>
+    <div class="t"><span id="listTitle" tabindex="-1"></span><a class="btn" id="quick">+ 빠른 입력</a></div>
     <div id="list"></div>
   </section>
 
@@ -188,7 +189,8 @@
       body: JSON.stringify({ token: TOKEN, action: 'setmemo', row: x.row, name: x.merchant, key: x.key, old: old, memo: memo }) }),
   };
   // </API>
-  let shown = 30;                 // 결제 목록에 처음 보일 줄 수
+  const PER = 10;                 // 결제 목록 한 쪽에 보일 줄 수 (rev 0.30)
+  let page = 0;                   // 보고 있는 쪽 (0 = 1쪽). 조용히 다시 받을 때는 그대로, 달을 옮기면 1쪽
   const opened = {};              // 펼친 묶음
   let editing = null;             // 카테고리·메모를 고치는 중인 결제 { row, cat, remember, memo } (다시 그려도 고른 값 유지)
   let saving = false;             // 카테고리·메모 저장 중 (두 번 보내지 않게)
@@ -219,7 +221,7 @@
     if (!quiet) { $('prev').disabled = $('next').disabled = true; $('title').textContent = '불러오는 중…'; }
     API.get(ym,
       // 화면에 쓰는 응답만 폰에 저장 (늦게 온 옛 응답이 저장본을 덮지 않게, Codex 검토 rev 0.28)
-      d => { if (my !== reqId || (quiet && busy())) return; if (d.isCurrent) saveCache(d); DATA = d; if (!quiet) { shown = 30; editing = null; window.scrollTo(0, 0); } render(); },
+      d => { if (my !== reqId || (quiet && busy())) return; if (d.isCurrent) saveCache(d); DATA = d; if (!quiet) { page = 0; editing = null; window.scrollTo(0, 0); } render(); },
       e => { if (my !== reqId) return; toast('불러오지 못했어요: ' + e.message); if (DATA && !(quiet && busy())) render(); });
   }
 
@@ -335,10 +337,13 @@
   function renderList(d) {
     const loading = d.listTotal < 0;   // rev 0.23 이전에 저장된 숫자만 보이는 동안 (그때는 목록을 저장 안 했음)
     const can = !!d.cats && d.cats.length > 0;   // 서버가 카테고리 목록을 줄 때만 눌러서 바꾸기 (rev 0.22)
-    $('listTitle').textContent = Number(d.ym.slice(5)) + '월 결제' + (loading ? '' : ' ' + d.listTotal + '건' + (can ? ' · 누르면 분류·메모' : ''));
+    const pages = Math.ceil(d.list.length / PER);
+    page = Math.max(0, Math.min(page, pages - 1));   // 다시 받은 목록이 짧아졌으면 마지막 쪽으로
+    $('listTitle').textContent = Number(d.ym.slice(5)) + '월 결제' + (loading ? '' : ' ' + d.listTotal + '건'
+      + (pages > 1 ? ' · ' + (page + 1) + '/' + pages + '쪽' : '') + (can ? ' · 누르면 분류·메모' : ''));
     const box = $('list'); box.replaceChildren();
     if (!d.list.length) { box.append(el('div', 'empty', loading ? '불러오는 중…' : '기록 없음')); return; }
-    d.list.slice(0, shown).forEach(x => {
+    d.list.slice(page * PER, page * PER + PER).forEach(x => {
       const r = el(can && x.row ? 'button' : 'div', 'li');
       const left = el('span'); left.append(document.createTextNode(x.date + ' ' + x.merchant), el('br'),
         el('span', 'm', [x.card, x.cat, x.flag].filter(Boolean).join(' · ')));
@@ -356,11 +361,15 @@
       box.append(r);
       if (open) box.append(picker(x));
     });
-    if (d.listTotal > d.list.length && shown >= d.list.length) box.append(el('div', 'empty', '최근 ' + d.list.length + '건까지만 보여요. 나머지는 시트에서'));
-    if (d.list.length > shown) {
-      const more = el('button', 'more', '더 보기 ▾ (' + (d.list.length - shown) + '건 더)');
-      more.addEventListener('click', () => { shown += 30; renderList(DATA); });
-      box.append(more);
+    if (d.listTotal > d.list.length && page === pages - 1) box.append(el('div', 'empty', '최근 ' + d.list.length + '건까지만 보여요. 나머지는 시트에서'));
+    if (pages > 1) {
+      const bar = el('div', 'pager');
+      const go = n => () => { page = n; editing = null; renderList(DATA); $('list').parentElement.scrollIntoView({ block: 'start' }); $('listTitle').focus({ preventScroll: true }); };   // 누른 단추가 다시 그려져 사라지므로 제목(몇 쪽인지 읽힘)으로 포커스
+      const prev = el('button', 'btn', '◀ 이전'), next = el('button', 'btn', '다음 ▶');
+      prev.disabled = page === 0; next.disabled = page === pages - 1;
+      prev.addEventListener('click', go(page - 1)); next.addEventListener('click', go(page + 1));
+      bar.append(prev, el('span', '', (page + 1) + ' / ' + pages + '쪽'), next);
+      box.append(bar);
     }
   }
 
