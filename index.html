@@ -60,6 +60,11 @@
   button.li { all: unset; box-sizing: border-box; display: flex; justify-content: space-between; gap: 8px; width: 100%;
     font-size: 13.5px; padding: 8px 0; border-top: 1px solid var(--line); cursor: pointer; }
   button.li:focus-visible { outline: 2px solid var(--blue); border-radius: 6px; }
+  button.li { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }   /* 꾹 누를 때 글자 선택·폰 메뉴 안 뜨게 */
+  .li.gone { opacity: .45; }
+  .pick .msg { width: 100%; font-size: 12.5px; color: var(--sub); }
+  button.btn.danger { background: #c62828; }
+  button.btn.ghost { background: var(--track); color: var(--ink); }
   .pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; background: var(--soft); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
   .pick select, .pick input[type=text] { flex: 1; min-width: 0; font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--track); border-radius: 8px; padding: 6px 8px; }
   .pick select { flex-basis: 100%; }
@@ -187,13 +192,21 @@
     // old: 보고 있던 메모 (그 사이 시트에서 바뀌었으면 서버가 거부, rev 0.28)
     setmemo: (x, old, memo) => call(EXEC, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ token: TOKEN, action: 'setmemo', row: x.row, name: x.merchant, key: x.key, old: old, memo: memo }) }),
+    // 삭제한('중복') 줄을 분류규칙 카테고리로 되돌림 (서버 rev 0.26). 삭제는 setcat 으로 '중복'
+    restore: x => call(EXEC, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ token: TOKEN, action: 'restore', row: x.row, name: x.merchant, key: x.key }) }),
   };
   // </API>
   const PER = 10;                 // 결제 목록 한 쪽에 보일 줄 수 (rev 0.30)
   let page = 0;                   // 보고 있는 쪽 (0 = 1쪽). 조용히 다시 받을 때는 그대로, 달을 옮기면 1쪽
   const opened = {};              // 펼친 묶음
   let editing = null;             // 카테고리·메모를 고치는 중인 결제 { row, cat, remember, memo } (다시 그려도 고른 값 유지)
-  let saving = false;             // 카테고리·메모 저장 중 (두 번 보내지 않게)
+  let saving = false;             // 카테고리·메모·삭제 저장 중 (두 번 보내지 않게)
+  let holding = null;             // 꾹 눌러 [삭제]·[되살리기]를 연 결제의 줄 번호 (rev 0.32)
+  const DUP = '중복';             // 삭제 = 시트 줄은 두고 카테고리 '중복' → 합계 제외 (같은 알림이 또 와도 다시 기록 안 됨)
+  const HOLD_MS = 550;            // 이만큼 누르고 있으면 꾹 누름
+  let held = false;               // 이번 누름이 꾹 누름이 됨 → 손을 뗄 때 브라우저가 보내는 click 은 무시 (다시 그린 줄에 와서 분류 칸이 열리지 않게)
+  ['pointerdown', 'keydown'].forEach(n => document.addEventListener(n, () => { held = false; }, true));   // 새 누름·키 입력마다 풀림
 
   const $ = id => document.getElementById(id);
   const won = n => Math.round(n).toLocaleString('ko-KR') + '원';
@@ -221,7 +234,7 @@
     if (!quiet) { $('prev').disabled = $('next').disabled = true; $('title').textContent = '불러오는 중…'; }
     API.get(ym,
       // 화면에 쓰는 응답만 폰에 저장 (늦게 온 옛 응답이 저장본을 덮지 않게, Codex 검토 rev 0.28)
-      d => { if (my !== reqId || (quiet && busy())) return; if (d.isCurrent) saveCache(d); DATA = d; if (!quiet) { page = 0; editing = null; window.scrollTo(0, 0); } render(); },
+      d => { if (my !== reqId || (quiet && busy())) return; if (d.isCurrent) saveCache(d); DATA = d; if (!quiet) { page = 0; editing = holding = null; window.scrollTo(0, 0); } render(); },
       e => { if (my !== reqId) return; toast('불러오지 못했어요: ' + e.message); if (DATA && !(quiet && busy())) render(); });
   }
 
@@ -340,31 +353,35 @@
     const pages = Math.ceil(d.list.length / PER);
     page = Math.max(0, Math.min(page, pages - 1));   // 다시 받은 목록이 짧아졌으면 마지막 쪽으로
     $('listTitle').textContent = Number(d.ym.slice(5)) + '월 결제' + (loading ? '' : ' ' + d.listTotal + '건'
-      + (pages > 1 ? ' · ' + (page + 1) + '/' + pages + '쪽' : '') + (can ? ' · 누르면 분류·메모' : ''));
+      + (pages > 1 ? ' · ' + (page + 1) + '/' + pages + '쪽' : '') + (can ? ' · 누르면 분류·메모, 꾹 누르면 삭제' : ''));
     const box = $('list'); box.replaceChildren();
     if (!d.list.length) { box.append(el('div', 'empty', loading ? '불러오는 중…' : '기록 없음')); return; }
     d.list.slice(page * PER, page * PER + PER).forEach(x => {
-      const r = el(can && x.row ? 'button' : 'div', 'li');
+      const r = el(can && x.row ? 'button' : 'div', 'li' + (x.cat === DUP ? ' gone' : ''));
       const left = el('span'); left.append(document.createTextNode(x.date + ' ' + x.merchant), el('br'),
-        el('span', 'm', [x.card, x.cat, x.flag].filter(Boolean).join(' · ')));
+        el('span', 'm', [x.card, x.cat === DUP ? '삭제됨' : x.cat, x.flag].filter(Boolean).join(' · ')));
       if (x.memo) left.append(el('br'), el('span', 'm', '✎ ' + x.memo));
       r.append(left, el('span', x.amount < 0 ? 'neg' : '', num(x.amount)));
       const open = !!editing && editing.row === x.row;
       if (r.tagName === 'BUTTON') {
         r.setAttribute('aria-expanded', open);
         r.addEventListener('click', () => {
+          if (held) { held = false; return; }
           if (saving) { toast('저장 중이에요. 잠시 뒤에 눌러 주세요'); return; }
           editing = open ? null : { row: x.row, cat: x.cat, remember: x.cat === '미분류', memo: x.memo || '' };
+          holding = null;
           renderList(DATA);
         });
+        holdable(r, x);
       }
       box.append(r);
       if (open) box.append(picker(x));
+      if (holding === x.row) box.append(holdBar(x));
     });
     if (d.listTotal > d.list.length && page === pages - 1) box.append(el('div', 'empty', '최근 ' + d.list.length + '건까지만 보여요. 나머지는 시트에서'));
     if (pages > 1) {
       const bar = el('div', 'pager');
-      const go = n => () => { page = n; editing = null; renderList(DATA); $('list').parentElement.scrollIntoView({ block: 'start' }); $('listTitle').focus({ preventScroll: true }); };   // 누른 단추가 다시 그려져 사라지므로 제목(몇 쪽인지 읽힘)으로 포커스
+      const go = n => () => { page = n; editing = holding = null; renderList(DATA); $('list').parentElement.scrollIntoView({ block: 'start' }); $('listTitle').focus({ preventScroll: true }); };   // 누른 단추가 다시 그려져 사라지므로 제목(몇 쪽인지 읽힘)으로 포커스
       const prev = el('button', 'btn', '◀ 이전'), next = el('button', 'btn', '다음 ▶');
       prev.disabled = page === 0; next.disabled = page === pages - 1;
       prev.addEventListener('click', go(page - 1)); next.addEventListener('click', go(page + 1));
@@ -415,6 +432,68 @@
     });
     f.append(sel, memo, btn, lab);
     return f;
+  }
+
+  // 꾹 누르기: 손가락을 HOLD_MS 동안 떼지도 움직이지도 않으면. 폰이 길게 누름으로 보내는 contextmenu
+  // (마우스 오른쪽·키보드 메뉴 키도)도 같은 일 → 폰 메뉴 대신 [삭제]
+  function holdable(r, x) {
+    let t = null, sx = 0, sy = 0;
+    const stop = () => { clearTimeout(t); t = null; };
+    r.addEventListener('pointerdown', e => {
+      if (e.button) return;
+      sx = e.clientX; sy = e.clientY; stop();
+      t = setTimeout(() => { t = null; hold(x); }, HOLD_MS);
+    });
+    r.addEventListener('pointermove', e => { if (t && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) stop(); });   // 스크롤하는 중이면 취소
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(n => r.addEventListener(n, stop));
+    r.addEventListener('contextmenu', e => { e.preventDefault(); stop(); hold(x); });
+  }
+  function hold(x) {
+    if (saving) { toast('저장 중이에요. 잠시 뒤에 눌러 주세요'); return; }
+    if (holding === x.row) return;   // 타이머와 contextmenu 가 둘 다 와도 한 번만
+    held = true; holding = x.row; editing = null; renderList(DATA);
+    const b = $('list').querySelector('.pick button'); if (b) b.focus({ preventScroll: true });
+  }
+
+  function holdBar(x) {
+    const gone = x.cat === DUP, f = el('div', 'pick');
+    f.append(el('div', 'msg', gone ? '삭제한 결제예요. 되살리면 다시 합계에 들어가요.' : '이 결제를 삭제할까요? 합계에서 빠지고, 다시 꾹 누르면 되살릴 수 있어요.'));
+    const yes = el('button', gone ? 'btn' : 'btn danger', gone ? '되살리기' : '삭제'), no = el('button', 'btn ghost', '취소');
+    no.addEventListener('click', () => { holding = null; renderList(DATA); });
+    yes.addEventListener('click', () => (gone ? restore : remove)(x));
+    f.append(yes, no);
+    return f;
+  }
+
+  // 삭제: 서버 저장(약 2초)을 기다리지 않고 바로 흐리게. 실패하면 되돌림
+  function remove(x) {
+    if (saving) return;
+    const was = lastYm, before = { cat: x.cat, flag: x.flag };
+    x.cat = DUP;
+    if (!/합계 제외/.test(x.flag || '')) x.flag = [x.flag, '합계 제외'].filter(Boolean).join(' · ');
+    DATA.listTotal--;
+    saving = true; holding = null; renderList(DATA);
+    API.setcat(x, DUP, false).then(() => {
+      saving = false;
+      toast(x.merchant + ' 삭제했어요');
+      if (lastYm === was) load(was, true);   // 합계·그래프도 맞춤
+    }, e => {
+      saving = false;
+      if (DATA && DATA.list.includes(x)) { Object.assign(x, before); DATA.listTotal++; renderList(DATA); }
+      toast('삭제 못 했어요: ' + e.message);
+    });
+  }
+  // 되살리기: 어느 카테고리로 돌아갈지는 서버가 정하므로 저장 뒤 다시 받음
+  function restore(x) {
+    if (saving) return;
+    const was = lastYm;
+    saving = true; holding = null; renderList(DATA);
+    toast('되살리는 중…');
+    API.restore(x).then(() => {
+      saving = false;
+      toast(x.merchant + ' 되살렸어요');
+      if (lastYm === was) load(was, true);
+    }, e => { saving = false; toast('되살리지 못했어요: ' + e.message); });
   }
 
   function render() {
