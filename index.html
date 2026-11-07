@@ -42,7 +42,7 @@
   .bar { height: 9px; border-radius: 5px; background: var(--track); margin: 4px 0 10px; position: relative; overflow: hidden; }
   .bar > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--blue); border-radius: 5px; }
   .bar.auto > i { background: var(--auto); }
-  .grp { all: unset; display: block; width: 100%; cursor: pointer; }
+  .grp { display: block; width: 100%; }
   .grp:focus-visible { outline: 2px solid var(--blue); border-radius: 6px; }
   .open { background: var(--soft); border-radius: 10px; padding: 6px 10px; margin: -6px 0 10px; font-size: 12.5px; }
   .open div { display: flex; justify-content: space-between; padding: 2px 0; }
@@ -107,19 +107,19 @@
   </section>
 
   <section class="card" aria-label="어디에 썼나">
-    <div class="t"><span>어디에 썼나</span><span>누르면 펼침</span></div>
+    <div class="t"><span>어디에 썼나</span></div>
     <div id="groups"></div>
   </section>
 
   <section class="card" aria-label="날마다 쓴 돈">
-    <div class="t"><span>날마다 쓴 돈 (생활비)</span><span id="dayMax"></span></div>
+    <div class="t"><span>날마다 쓴 돈 (변동지출)</span><span id="dayMax"></span></div>
     <div class="days" id="days"></div>
     <div class="lbl mini"><span>1일</span><span id="lastDay"></span></div>
     <details class="nums"><summary>숫자로 보기</summary><div id="dayNums"></div></details>
   </section>
 
   <section class="card" aria-label="최근 6개월">
-    <div class="t"><span>최근 6개월</span><span><span style="color:var(--blue)">■</span> 생활비 <span style="color:var(--auto)">■</span> 자동이체</span></div>
+    <div class="t"><span>최근 6개월</span><span><span style="color:var(--blue)">■</span> 변동지출 <span style="color:var(--auto)">■</span> 고정지출</span></div>
     <div class="months" id="months"></div>
     <details class="nums"><summary>숫자로 보기</summary><div id="monthNums"></div></details>
   </section>
@@ -199,11 +199,12 @@
   // </API>
   const PER = 10;                 // 결제 목록 한 쪽에 보일 줄 수 (rev 0.30)
   let page = 0;                   // 보고 있는 쪽 (0 = 1쪽). 조용히 다시 받을 때는 그대로, 달을 옮기면 1쪽
-  const opened = {};              // 펼친 묶음
   let editing = null;             // 카테고리·메모를 고치는 중인 결제 { row, cat, remember, memo } (다시 그려도 고른 값 유지)
   let saving = false;             // 카테고리·메모·삭제 저장 중 (두 번 보내지 않게)
   let holding = null;             // 꾹 눌러 [삭제]·[되살리기]를 연 결제의 줄 번호 (rev 0.32)
   const DUP = '중복';             // 삭제 = 시트 줄은 두고 카테고리 '중복' → 합계 제외 (같은 알림이 또 와도 다시 기록 안 됨)
+  const grpOf = x => x.grp || x.cat;   // 서버가 준 묶음 (rev 0.33). 옛 폰 저장본엔 없어 카테고리 이름으로
+  const unsorted = g => g === '기타' || g === '미분류';
   const HOLD_MS = 550;            // 이만큼 누르고 있으면 꾹 누름
   let held = false;               // 이번 누름이 꾹 누름이 됨 → 손을 뗄 때 브라우저가 보내는 click 은 무시 (다시 그린 줄에 와서 분류 칸이 열리지 않게)
   ['pointerdown', 'keydown'].forEach(n => document.addEventListener(n, () => { held = false; }, true));   // 새 누름·키 입력마다 풀림
@@ -246,7 +247,7 @@
     $('chip').replaceChildren();
     if (s.attention.count) $('chip').append(el('span', 'chip', '확인 ' + s.attention.count + '건'));
     $('total').textContent = won(s.total);
-    $('split').textContent = '생활비 ' + num(s.live) + ' · 자동이체 ' + num(s.auto) + (s.expected.count ? ' (예상 ' + num(s.expected.amount) + ' 포함)' : '');
+    $('split').textContent = '변동지출 ' + num(s.live) + ' · 고정지출 ' + num(s.auto) + (s.expected.count ? ' (예상 ' + num(s.expected.amount) + ' 포함)' : '');
 
     const p = s.pace;
     $('paceBox').classList.toggle('hidden', !p);
@@ -256,7 +257,7 @@
       fill.classList.toggle('over', d.isCurrent && p.ratio > p.mark);
       mark.style.left = Math.min(100, p.mark) + '%';
       mark.classList.toggle('hidden', !d.isCurrent);
-      $('paceText').textContent = '생활비 = ' + s.avg.months + '개월 평균 ' + won(s.avg.live) + '의 ' + Math.round(p.ratio) + '%';
+      $('paceText').textContent = '변동지출 = ' + s.avg.months + '개월 평균 ' + won(s.avg.live) + '의 ' + Math.round(p.ratio) + '%';
       $('markText').textContent = d.isCurrent ? '┃적정 ' + Math.round(p.mark) + '%' : '';
     }
     const diff = s.total - s.prevSame;
@@ -269,21 +270,15 @@
     const box = $('groups'); box.replaceChildren();
     const max = Math.max(0, ...s.groups.map(g => g.amount));
     if (!s.groups.length) { box.append(el('div', 'empty', '기록 없음')); return; }
-    s.groups.forEach(g => {
-      const b = el('button', 'grp'); b.setAttribute('aria-expanded', !!opened[g.name]);
+    s.groups.forEach(g => {   // rev 0.33: 묶음만 (카테고리로 펼치지 않음)
+      const b = el('div', 'grp');
       const l = el('div', 'lbl');
-      const name = el('span', '', g.name + (opened[g.name] ? ' ▾' : ' ▸'));
+      const name = el('span', '', g.name);
       if (g.auto) name.append(el('span', 'mini', ' 자동'));
       l.append(name, el('span', '', num(g.amount)));
       const bar = el('div', 'bar' + (g.auto ? ' auto' : '')); const i = el('i'); i.style.width = pct(g.amount, max) + '%'; bar.append(i);
       b.append(l, bar);
-      b.addEventListener('click', () => { opened[g.name] = !opened[g.name]; renderGroups(DATA.stats); });
       box.append(b);
-      if (opened[g.name]) {
-        const o = el('div', 'open');
-        g.cats.forEach(c => { const r = el('div'); r.append(el('span', '', c.cat), el('span', '', num(c.amount))); o.append(r); });
-        box.append(o);
-      }
     });
   }
 
@@ -311,12 +306,12 @@
       const c = el('div', m.ym === d.ym ? 'sel' : '');
       const live = el('b'); live.style.height = pct(Math.max(0, m.live), max) * 0.8 + 'px';
       const auto = el('b', 'a'); auto.style.height = pct(Math.max(0, m.auto), max) * 0.8 + 'px';
-      c.title = m.label + ' 생활비 ' + won(m.live) + ' · 자동이체 ' + won(m.auto);
+      c.title = m.label + ' 변동지출 ' + won(m.live) + ' · 고정지출 ' + won(m.auto);
       c.append(live, auto, document.createTextNode(m.label));
       box.append(c);
     });
     const nums = $('monthNums'); nums.replaceChildren();
-    d.months.forEach(m => { const r = el('div'); r.append(el('span', '', m.label), el('span', '', '생활비 ' + num(m.live) + ' · 자동이체 ' + num(m.auto))); nums.append(r); });
+    d.months.forEach(m => { const r = el('div'); r.append(el('span', '', m.label), el('span', '', '변동지출 ' + num(m.live) + ' · 고정지출 ' + num(m.auto))); nums.append(r); });
   }
 
   function renderTodo(d) {
@@ -359,7 +354,7 @@
     d.list.slice(page * PER, page * PER + PER).forEach(x => {
       const r = el(can && x.row ? 'button' : 'div', 'li' + (x.cat === DUP ? ' gone' : ''));
       const left = el('span'); left.append(document.createTextNode(x.date + ' ' + x.merchant), el('br'),
-        el('span', 'm', [x.card, x.cat === DUP ? '삭제됨' : x.cat, x.flag].filter(Boolean).join(' · ')));
+        el('span', 'm', [x.card, x.cat === DUP ? '삭제됨' : grpOf(x), x.flag].filter(Boolean).join(' · ')));
       if (x.memo) left.append(el('br'), el('span', 'm', '✎ ' + x.memo));
       r.append(left, el('span', x.amount < 0 ? 'neg' : '', num(x.amount)));
       const open = !!editing && editing.row === x.row;
@@ -368,7 +363,7 @@
         r.addEventListener('click', () => {
           if (held) { held = false; return; }
           if (saving) { toast('저장 중이에요. 잠시 뒤에 눌러 주세요'); return; }
-          editing = open ? null : { row: x.row, cat: x.cat, remember: x.cat === '미분류', memo: x.memo || '' };
+          editing = open ? null : { row: x.row, cat: grpOf(x), remember: unsorted(grpOf(x)), memo: x.memo || '' };
           holding = null;
           renderList(DATA);
         });
@@ -390,35 +385,35 @@
     }
   }
 
-  // 카테고리 고르기·메모: 고른 이름만 서버로 (서버가 '카테고리' 탭에 있는 이름인지 다시 확인)
+  // 묶음 고르기·메모 (rev 0.33): 고른 묶음 이름만 서버로 (서버가 묶음 목록에 있는 이름인지 다시 확인)
   function picker(x) {
     const f = el('div', 'pick');
     const sel = el('select'); sel.setAttribute('aria-label', x.merchant + ' 카테고리');
-    const list = DATA.cats.includes(x.cat) ? DATA.cats : [x.cat].concat(DATA.cats);
+    const cur = grpOf(x), list = DATA.cats.includes(cur) ? DATA.cats : [cur].concat(DATA.cats);
     list.forEach(c => { const o = el('option', '', c); o.value = c; o.selected = c === editing.cat; sel.append(o); });
     const memo = el('input'); memo.type = 'text'; memo.maxLength = 200; memo.value = editing.memo;
     memo.placeholder = '메모 (예: 이월드 주차)'; memo.setAttribute('aria-label', x.merchant + ' 메모');
     const btn = el('button', 'btn', '저장'); btn.disabled = saving;
     const lab = el('label'); const chk = el('input'); chk.type = 'checkbox'; chk.checked = editing.remember;
-    lab.append(chk, document.createTextNode(' 이 가게는 앞으로도 (분류규칙에 추가, 같은 가게 미분류도 같이)'));
+    lab.append(chk, document.createTextNode(' 이 가게는 앞으로도 (분류규칙에 추가, 같은 가게의 기타도 같이)'));
     sel.addEventListener('change', () => { editing.cat = sel.value; });
     chk.addEventListener('change', () => { editing.remember = chk.checked; });
     memo.addEventListener('input', () => { editing.memo = memo.value; });
     btn.addEventListener('click', () => {
       if (saving) return;
       const was = lastYm, cat = sel.value, remember = chk.checked, note = memo.value.trim(), oldNote = x.memo || '';
-      // 미분류 그대로 + 앞으로도(기본 체크)는 분류 저장 안 함 (메모만 쓸 때 '미분류' 규칙이 생기지 않게)
-      const catJob = cat !== x.cat || (remember && cat !== '미분류'), memoJob = note !== oldNote;
+      // 기타 그대로 + 앞으로도(기본 체크)는 분류 저장 안 함 (메모만 쓸 때 '기타' 규칙이 생기지 않게)
+      const catJob = cat !== cur || (remember && !unsorted(cat)), memoJob = note !== oldNote;
       if (!catJob && !memoJob) { editing = null; renderList(DATA); return; }
       // 서버 저장(약 2초)을 기다리지 않고 목록부터 바꿔 보여 줌 (rev 0.23). 실패하면 되돌림
-      const changed = catJob ? DATA.list.filter(y => y === x || (remember && y.merchant === x.merchant && y.cat === '미분류')) : [];
-      const before = changed.map(y => y.cat);
-      changed.forEach(y => { y.cat = cat; }); x.memo = note;
+      const changed = catJob ? DATA.list.filter(y => y === x || (remember && y.merchant === x.merchant && unsorted(grpOf(y)))) : [];
+      const before = changed.map(y => [y.cat, y.grp]);
+      changed.forEach(y => { y.cat = y.grp = cat; }); x.memo = note;
       saving = true; editing = null; renderList(DATA);
       // 분류·메모는 따로 저장 → 하나만 실패하면 그것만 되돌림
       Promise.allSettled([catJob && API.setcat(x, cat, remember), memoJob && API.setmemo(x, oldNote, note)]).then(([c, m]) => {
         saving = false;
-        if (c.status === 'rejected') changed.forEach((y, i) => { if (y.cat === cat) y.cat = before[i]; });
+        if (c.status === 'rejected') changed.forEach((y, i) => { if (y.cat === cat) [y.cat, y.grp] = before[i]; });
         if (m.status === 'rejected' && x.memo === note) x.memo = oldNote;
         if (memoJob && m.status === 'fulfilled') x.memo = m.value.memo;   // 서버가 실제 저장한 글 ('|' → '/' 등)
         if (DATA && DATA.list.includes(x)) renderList(DATA);
