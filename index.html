@@ -406,7 +406,7 @@
       const catJob = cat !== cur || (remember && !unsorted(cat)), memoJob = note !== oldNote;
       if (!catJob && !memoJob) { editing = null; renderList(DATA); return; }
       // 서버 저장(약 2초)을 기다리지 않고 목록부터 바꿔 보여 줌 (rev 0.23). 실패하면 되돌림
-      const changed = catJob ? DATA.list.filter(y => y === x || (remember && y.merchant === x.merchant && unsorted(grpOf(y)))) : [];
+      const changed = catJob ? DATA.list.filter(y => y === x || (remember && y.merchant === x.merchant && y.cat !== DUP && unsorted(grpOf(y)))) : [];   // 삭제한 줄은 그대로 (Codex)
       const before = changed.map(y => [y.cat, y.grp]);
       changed.forEach(y => { y.cat = y.grp = cat; }); x.memo = note;
       saving = true; editing = null; renderList(DATA);
