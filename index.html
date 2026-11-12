@@ -363,7 +363,7 @@
         r.addEventListener('click', () => {
           if (held) { held = false; return; }
           if (saving) { toast('저장 중이에요. 잠시 뒤에 눌러 주세요'); return; }
-          editing = open ? null : { row: x.row, cat: grpOf(x), remember: unsorted(grpOf(x)), memo: x.memo || '' };
+          editing = open ? null : { row: x.row, cat: grpOf(x), remember: false, memo: x.memo || '' };
           holding = null;
           renderList(DATA);
         });
